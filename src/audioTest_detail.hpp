@@ -1,8 +1,8 @@
 #pragma once
 
 #include "bleControl.h"
-#include "audioInput.h"
-#include "fl/fft.h"
+#include "audioProcessing.h"
+//#include "fl/fft.h"
 #include "fl/xymap.h"
 #include "fl/math.h"
 #include "fl/math_macros.h"
@@ -16,16 +16,20 @@ namespace audioTest {
 	bool audioTestInstance = false;
 
     uint16_t (*xyFunc)(uint8_t x, uint8_t y);
+	
 	uint8_t hue = 0;
+
+	float volumeLid = 10.0f;
 
     void initAudioTest(uint16_t (*xy_func)(uint8_t, uint8_t)) {
         audioTestInstance = true;
         xyFunc = xy_func;
         
         // Initialize audio input system
-        flAudio::initAudio();
+        flAudio::initAudioInput();
+		// Initialize audio processing system
+		flAudio::initAudioProcessing();
 	}
-	
 
 	// Get current color palette
 	CRGBPalette16 getCurrentPalette() {
@@ -51,7 +55,6 @@ namespace audioTest {
 		}
 	}
 
-
     //===============================================================================================
 
 	void printSampleData(){
@@ -59,21 +62,21 @@ namespace audioTest {
 		EVERY_N_MILLISECONDS(500) {
 
 			Serial.print("Volume: ");
-			Serial.println(flAudio::currentAudioData->volume);
+			Serial.println(flAudio::smoothedAudioData->volume);
 			Serial.print("VolumeRaw: ");
-			Serial.println(flAudio::currentAudioData->volumeRaw);
+			Serial.println(flAudio::smoothedAudioData->volumeRaw);
 			Serial.print("Peak: ");
-			Serial.println(flAudio::currentAudioData->peak);
+			Serial.println(flAudio::smoothedAudioData->peak);
 			Serial.print("Beat Detected: ");
-			Serial.println(flAudio::currentAudioData->beatDetected);
+			Serial.println(flAudio::smoothedAudioData->beatDetected);
 			Serial.print("Dominant Frequency: ");
-			Serial.println(flAudio::currentAudioData->dominantFrequency);
+			Serial.println(flAudio::smoothedAudioData->dominantFrequency);
 			Serial.print("Magnitude: ");
-			Serial.println(flAudio::currentAudioData->magnitude);
+			Serial.println(flAudio::smoothedAudioData->magnitude);
 			Serial.print("Volume: ");
-			Serial.println(flAudio::currentAudioData->volume);
+			Serial.println(flAudio::smoothedAudioData->volume);
 			for (size_t band = 0; band < numFreqBins ; band++) {
-				float bandValue = currentAudioData->frequencyBins[band];
+				float bandValue = smoothedAudioData->frequencyBins[band];
 				Serial.print("Band");
 				Serial.print(band);
 				Serial.print(": ");
@@ -81,7 +84,6 @@ namespace audioTest {
 			}
 		}
 	}
-
 	
 	// Visualization: Spectrum Bars
 	void drawSpectrumBars() { 
@@ -92,12 +94,11 @@ namespace audioTest {
 		int barWidth = WIDTH / numFreqBins;
 		//int barWidth = 1;
 
-		// Use the already-processed audio data from sampleAudio()
-		if (!currentAudioData) return;  // Safety check
+		if (!smoothedAudioData) return;
 		
 		for (size_t band = 0; band < numFreqBins ; band++) {
 
-			float magnitude = currentAudioData->frequencyBins[band];
+			float magnitude = smoothedAudioData->frequencyBins[band];
 
 			uint16_t maxMagnitude = 1000 * cMagnitudeScale/255.0f;
 			int barHeight = map(magnitude,0,maxMagnitude,0,HEIGHT-1);
@@ -140,18 +141,15 @@ namespace audioTest {
 		int centerX = WIDTH / 2;
 		int centerY = HEIGHT / 2;
 
-		// Use the already-processed audio data from sampleAudio()
-		if (!currentAudioData) return;  // Safety check
+		if (!smoothedAudioData) return;  // Safety check
 
 		for (size_t angle = 0; angle < 360; angle += 6) {  // Reduced resolution
 			size_t band = (angle / 6) % numFreqBins;
 
-			// Get frequency bin magnitude (already normalized 0.0-1.0)
-			float magnitude = currentAudioData->frequencyBins[band];
+			// Get frequency bin magnitude
+			float magnitude = smoothedAudioData->frequencyBins[band];
 
 			EVERY_N_MILLISECONDS(100){ Serial.println(magnitude); }
-
-
 
 			//magnitude = MAX(0.0f, magnitude ); // - cNoiseFloor
 			//magnitude *= cGainAdjust;
@@ -175,7 +173,6 @@ namespace audioTest {
 			}
 		}
 	}
-
 	
 	// Visualization: Waveform using AudioReactive processing
 	void drawWaveform(const Slice<const int16_t>& pcm) {
@@ -183,16 +180,18 @@ namespace audioTest {
 		CRGBPalette16 palette = getCurrentPalette();
 
 		// Safety check for processed audio data
-		if (!currentAudioData) return;
+		if (!smoothedAudioData) return;
 
 		int samplesPerPixel = pcm.size() / WIDTH;
 		int centerY = HEIGHT / 2;
 
+		/*
 		// Use AudioReactive's volume for adaptive scaling
-		float globalVolume = currentAudioData->volume;
+		float globalVolume = smoothedAudioData->volume;
 		float adaptiveGain = 1.0f + (globalVolume * 2.0f); // Boost based on overall volume
+		*/
 		float magnitudeScale = cMagnitudeScale / 255.0f;
-
+		
 		for (size_t x = 0; x < WIDTH; x++) {
 			size_t sampleIndex = x * samplesPerPixel;
 			if (sampleIndex >= pcm.size()) break;
@@ -205,8 +204,8 @@ namespace audioTest {
 			float logAmplitude = 0.0f;
 			if (absSample > 0.001f) {
 				// Logarithmic compression with AudioReactive-informed scaling
-				float scaledSample = absSample * adaptiveGain * magnitudeScale * 3.0f; // Boost factor
-				logAmplitude = log10f(1.0f + scaledSample * 9.0f) / log10f(10.0f);
+				float scaledSample = absSample * magnitudeScale * 3.0f; // Boost factor
+				logAmplitude = log10f(1.0f + absSample * 9.0f) / log10f(10.0f); // Normalize to 0-1   replaced scaledSample with absSample
 			}
 
 			// Apply some gamma correction for better visual response
@@ -257,96 +256,23 @@ namespace audioTest {
 		}
 	}
 
-
 //=========================================
-/*
-This the last line of flAudio::sampleAudio():
-	currentAudioData = &audio.getSmoothedData();  // Store pointer to the processed data
-
-This is what currentAudioData is:
-	const AudioData* currentAudioData = nullptr;  // Pointer to current processed audio data
-*/
 
 	// Visualization: VU Meter using AudioReactive data
-	void drawVUMeter() {
+	void drawVUMeter(float volume, float peak) {
+		
 		clearDisplay();
 		CRGBPalette16 palette = getCurrentPalette();
 
-		// Safety check
-		if (!currentAudioData) return;
+		if (!smoothedAudioData) return;
 
-		// Get AudioReactive data using similar scaling as spectrum bars
-		float volume = currentAudioData->volume;                 // Use volume directly
-		float peak = currentAudioData->peak;                     // Use peak directly
+		volumeLid = 20.0f;	
 
-		// Get beat detection - try both the data structure and direct access
-		bool beatDetected = currentAudioData->beatDetected;
+		bool beatDetected = smoothedAudioData->beatDetected;
 
-		// Also try accessing beat detection directly from the audio object
-		bool directBeat = flAudio::audio.isBeat();
-
-		// Simple magnitude-based beat detection as fallback
-		static float prevMagnitude = 0;
-		static uint32_t lastBeatTime = 0;
-		float magnitudeIncrease = currentAudioData->magnitude - prevMagnitude;
-		uint32_t currentTime = millis();
-
-		// Detect beat if magnitude increases significantly and enough time has passed
-		bool magnitudeBeat = (magnitudeIncrease > 20.0f) &&
-		                    (currentTime - lastBeatTime > 100); // Min 100ms between beats
-
-		if (magnitudeBeat) {
-			lastBeatTime = currentTime;
-		}
-		prevMagnitude = currentAudioData->magnitude;
-
-		// Use any of the beat detection methods
-		bool anyBeat = beatDetected || directBeat || magnitudeBeat;
-
-		// Debug output
-		EVERY_N_MILLISECONDS(500) {
-			Serial.print("VU Debug - Volume: ");
-			Serial.print(volume);
-			Serial.print(", Peak: ");
-			Serial.print(peak);
-			Serial.print(", Beat: ");
-			Serial.print(beatDetected);
-			Serial.print(", DirectBeat: ");
-			Serial.print(directBeat);
-			Serial.print(", MagBeat: ");
-			Serial.print(magnitudeBeat);
-			Serial.print(", Magnitude: ");
-			Serial.print(currentAudioData->magnitude);
-			Serial.print(" (+" );
-			Serial.print(magnitudeIncrease);
-			Serial.println(")");
-		}
-
-		// Scale based on observed data ranges
-		// Volume: 0.6-3.3, Peak: 2.0-8.25 from your debug output
-		float maxVolume = 5.0f * (cMagnitudeScale / 255.0f);  // Adjust based on observed max
-		float maxPeak = 10.0f * (cMagnitudeScale / 255.0f);   // Adjust based on observed max
-
-		// Map volume and peak to 0-WIDTH range using realistic maximums
-		int volumeWidth = map(volume * 100, 0, maxVolume * 100, 0, WIDTH);  // Scale up for map() precision
-		volumeWidth = fl::clamp(volumeWidth, 0, WIDTH);
-
-		int peakX = map(peak * 100, 0, maxPeak * 100, 0, WIDTH-1);  // Scale up for map() precision
-		peakX = fl::clamp(peakX, 0, WIDTH-1);
-
-		// Add debug for calculated widths
-		EVERY_N_MILLISECONDS(500) {
-			Serial.print(" -> VolumeWidth: ");
-			Serial.print(volumeWidth);
-			Serial.print("/");
-			Serial.print(WIDTH);
-			Serial.print(", PeakX: ");
-			Serial.print(peakX);
-			Serial.print("/");
-			Serial.println(WIDTH-1);
-		}
-
-		// RMS/Volume level bar (main body of VU meter)
+	    // Volume level bar
+		uint8_t volumeWidth = ( volume / volumeLid ) * WIDTH;
+    	volumeWidth = MIN(volumeWidth, WIDTH);
 		for (int x = 0; x < volumeWidth; x++) {
 			for (int y = HEIGHT/3; y < 2*HEIGHT/3; y++) {
 				uint8_t colorIndex = fl::map_range<int, uint8_t>(x, 0, WIDTH, 0, 255);
@@ -357,20 +283,20 @@ This is what currentAudioData is:
 			}
 		}
 
-		// Peak indicator (white line)
+		// Peak indicator
+		/*int peakX = peak * WIDTH;
+    	peakX = MIN(peakX, WIDTH - 1);
+
 		for (int y = HEIGHT/4; y < 3*HEIGHT/4; y++) {
 			int ledIndex = xyFunc(peakX, y);
 			if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-				leds[ledIndex] = CRGB::White;
+				leds[ledIndex] = CRGB::Red;
 			}
-		}
+		}*/
 
 		// Beat indicator (flash top/bottom edges)
-		if (anyBeat) {
-			// Debug when beat is detected
-			Serial.println("BEAT DETECTED!");
+		/*if (beatDetected) {
 
-			// Flash the entire border for more visibility
 			for (int x = 0; x < WIDTH; x++) {
 				// Top and bottom edges
 				int ledIndex1 = xyFunc(x, 0);
@@ -386,7 +312,7 @@ This is what currentAudioData is:
 				if (ledIndex1 >= 0 && ledIndex1 < NUM_LEDS) leds[ledIndex1] = CRGB::White;
 				if (ledIndex2 >= 0 && ledIndex2 < NUM_LEDS) leds[ledIndex2] = CRGB::White;
 			}
-		}
+		}*/
 	}
 
 	/*
@@ -473,6 +399,7 @@ This is what currentAudioData is:
 
 		hue += 1;
 		
+		flAudio::updateConfig();
 		flAudio::sampleAudio();
 
 		//printSampleData();
@@ -492,7 +419,7 @@ This is what currentAudioData is:
 				break;
 			
 			case 3:  // VU Meter
-				drawVUMeter();
+				drawVUMeter(smoothedAudioData->volume, smoothedAudioData->peak);
 				break;
 			/*	
 			case 4:  // Matrix Rain

@@ -19,7 +19,7 @@ Setting numHandles = 60 has worked for 7 characteristics.
 #define FORMAT_LITTLEFS_IF_FAILED true 
 
 bool displayOn = true;
-bool debug = true;
+bool debug = false;
 bool pauseAnimation = false;
 
 uint8_t dummy = 1;

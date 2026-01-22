@@ -50,10 +50,10 @@ struct AudioReactiveConfig {
     fl::u8 gain = 128;              // Input gain (0-255)
     fl::u8 sensitivity = 128;       // AGC sensitivity
     bool agcEnabled = true;          // Auto gain control
-    bool noiseGate = true;           // Noise gate
+    bool noiseGate = false;           // Noise gate
     fl::u8 attack = 50;             // Attack time (ms) - how fast to respond to increases
     fl::u8 decay = 200;             // Decay time (ms) - how slow to respond to decreases
-    u16 sampleRate = 22050;     // Sample rate (Hz)
+    u16 sampleRate = 44100;         // Sample rate (Hz)
     fl::u8 scalingMode = 3;         // 0=none, 1=log, 2=linear, 3=sqrt
 
     // Enhanced beat detection configuration

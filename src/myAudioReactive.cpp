@@ -61,6 +61,9 @@ void AudioReactive::processSample(const AudioSample& sample) {
     
     // Process the AudioSample immediately - timing is gated by sample availability
     processFFT(sample);
+
+
+    
     updateVolumeAndPeak(sample);
     
     // Enhanced processing pipeline
@@ -115,7 +118,7 @@ void AudioReactive::mapFFTBinsToFrequencyChannels() {
         mCurrentData.frequencyBins[i] *= PINK_NOISE_COMPENSATION[i];
     }
     
-    // Find dominant frequency
+    // Find dominant frequency 
     float maxMagnitude = 0.0f;
     int maxBin = 0;
     for (int i = 0; i < 16; ++i) {
