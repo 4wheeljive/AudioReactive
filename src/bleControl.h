@@ -28,7 +28,7 @@ extern uint8_t PROGRAM;
 extern uint8_t MODE;
 extern uint8_t BRIGHTNESS;
 
-using namespace fl;
+//using namespace fl;
 using namespace ArduinoJson;
 
  // PROGRAM/MODE FRAMEWORK ===============================================================================
@@ -102,7 +102,7 @@ using namespace ArduinoJson;
 
           // Get program name from flash memory
           char progName[16];
-          strcpy_P(progName,(char*)pgm_read_ptr(&PROGRAM_NAMES[programNum]));
+          ::strcpy(progName,(char*)pgm_read_ptr(&PROGRAM_NAMES[programNum]));
 
           if (mode < 0 || MODE_COUNTS[programNum] == 0) {
               return String(progName);
@@ -118,7 +118,7 @@ using namespace ArduinoJson;
           if (mode >= MODE_COUNTS[programNum]) return String(progName);
 
           char modeName[20];
-          strcpy_P(modeName,(char*)pgm_read_ptr(&modeArray[mode]));
+          ::strcpy(modeName,(char*)pgm_read_ptr(&modeArray[mode]));
 
          //return String(progName) + "-" + String(modeName);
          String result = "";
@@ -134,7 +134,7 @@ using namespace ArduinoJson;
           
           for (int i = 0; i < LOOKUP_SIZE; i++) {
               char entryName[32];
-              strcpy_P(entryName, (char*)pgm_read_ptr(&VISUALIZER_PARAM_LOOKUP[i].visualizerName));
+              ::strcpy(entryName, (char*)pgm_read_ptr(&VISUALIZER_PARAM_LOOKUP[i].visualizerName));
               
               if (visualizerName.equals(entryName)) {
                   return &VISUALIZER_PARAM_LOOKUP[i];
@@ -172,21 +172,21 @@ uint8_t cFadeSpeed = 20;
 //bool cBeatDetect = true;
 //bool cBeatFlash = true;
 
-EaseType getEaseType(uint8_t value) {
+fl::EaseType getEaseType(uint8_t value) {
     switch (value) {
-        case 0: return EASE_NONE;
-        case 1: return EASE_IN_QUAD;
-        case 2: return EASE_OUT_QUAD;
-        case 3: return EASE_IN_OUT_QUAD;
-        case 4: return EASE_IN_CUBIC;
-        case 5: return EASE_OUT_CUBIC;
-        case 6: return EASE_IN_OUT_CUBIC;
-        case 7: return EASE_IN_SINE;
-        case 8: return EASE_OUT_SINE;
-        case 9: return EASE_IN_OUT_SINE;
+        case 0: return fl::EASE_NONE;
+        case 1: return fl::EASE_IN_QUAD;
+        case 2: return fl::EASE_OUT_QUAD;
+        case 3: return fl::EASE_IN_OUT_QUAD;
+        case 4: return fl::EASE_IN_CUBIC;
+        case 5: return fl::EASE_OUT_CUBIC;
+        case 6: return fl::EASE_IN_OUT_CUBIC;
+        case 7: return fl::EASE_IN_SINE;
+        case 8: return fl::EASE_OUT_SINE;
+        case 9: return fl::EASE_IN_OUT_SINE;
     }
     FL_ASSERT(false, "Invalid ease type");
-    return EASE_NONE;
+    return fl::EASE_NONE;
 }
 
 uint8_t cEaseSat = 0;
@@ -282,10 +282,10 @@ bool wasConnected = false;
 #define NUMBER_CHARACTERISTIC_UUID     "19b10003-e8f2-537e-4f6c-d104768a1214"
 #define STRING_CHARACTERISTIC_UUID     "19b10004-e8f2-537e-4f6c-d104768a1214"
 
-BLEDescriptor pButtonDescriptor(BLEUUID((uint16_t)0x2902));
-BLEDescriptor pCheckboxDescriptor(BLEUUID((uint16_t)0x2902));
-BLEDescriptor pNumberDescriptor(BLEUUID((uint16_t)0x2902));
-BLEDescriptor pStringDescriptor(BLEUUID((uint16_t)0x2902));
+//BLEDescriptor pButtonDescriptor(BLEUUID((uint16_t)0x2902));
+//BLEDescriptor pCheckboxDescriptor(BLEUUID((uint16_t)0x2902));
+//BLEDescriptor pNumberDescriptor(BLEUUID((uint16_t)0x2902));
+//BLEDescriptor pStringDescriptor(BLEUUID((uint16_t)0x2902));
 
 
 //*******************************************************************************
@@ -540,7 +540,7 @@ void sendDeviceState() {
        // Loop through parameters for current visualizer
        for (uint8_t i = 0; i < visualizerParams->count; i++) {
            char paramName[32];
-           strcpy_P(paramName, (char*)pgm_read_ptr(&visualizerParams->params[i]));
+           ::strcpy(paramName, (char*)pgm_read_ptr(&visualizerParams->params[i]));
            
            if (debug) {
                Serial.print("Processing parameter: ");
@@ -552,7 +552,7 @@ void sendDeviceState() {
    // Add parameter values to JSON based on visualizer params
    for (uint8_t i = 0; i < visualizerParams->count; i++) {
        char paramName[32];
-       strcpy_P(paramName, (char*)pgm_read_ptr(&visualizerParams->params[i]));
+       ::strcpy(paramName, (char*)pgm_read_ptr(&visualizerParams->params[i]));
        
        bool paramFound = false;
        // Use X-macro to match parameter names and add values
@@ -840,7 +840,7 @@ void bleSetup() {
                   );
    pButtonCharacteristic->setCallbacks(new ButtonCharacteristicCallbacks());
    pButtonCharacteristic->setValue(String(dummy).c_str());
-   pButtonCharacteristic->addDescriptor(new BLE2902());
+   //pButtonCharacteristic->addDescriptor(new BLE2902());
 
    pCheckboxCharacteristic = pService->createCharacteristic(
                      CHECKBOX_CHARACTERISTIC_UUID,
@@ -850,7 +850,7 @@ void bleSetup() {
                   );
    pCheckboxCharacteristic->setCallbacks(new CheckboxCharacteristicCallbacks());
    pCheckboxCharacteristic->setValue(String(dummy).c_str());
-   pCheckboxCharacteristic->addDescriptor(new BLE2902());
+   //pCheckboxCharacteristic->addDescriptor(new BLE2902());
    
    pNumberCharacteristic = pService->createCharacteristic(
                      NUMBER_CHARACTERISTIC_UUID,
@@ -860,7 +860,7 @@ void bleSetup() {
                   );
    pNumberCharacteristic->setCallbacks(new NumberCharacteristicCallbacks());
    pNumberCharacteristic->setValue(String(dummy).c_str());
-   pNumberCharacteristic->addDescriptor(new BLE2902());
+   //pNumberCharacteristic->addDescriptor(new BLE2902());
 
    pStringCharacteristic = pService->createCharacteristic(
                      STRING_CHARACTERISTIC_UUID,
@@ -870,7 +870,7 @@ void bleSetup() {
                   );
    pStringCharacteristic->setCallbacks(new StringCharacteristicCallbacks());
    pStringCharacteristic->setValue(String(dummy).c_str());
-   pStringCharacteristic->addDescriptor(new BLE2902());
+   //pStringCharacteristic->addDescriptor(new BLE2902());
    
 
    //**********************************************************

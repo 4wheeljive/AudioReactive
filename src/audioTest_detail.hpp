@@ -2,38 +2,36 @@
 
 #include "bleControl.h"
 #include "audioProcessing.h"
-//#include "fl/fft.h"
 #include "fl/xymap.h"
-#include "fl/math.h"
-#include "fl/math_macros.h"
 
-using fl::i16;
+// Access to LED array from main.cpp
+extern CRGB leds[];
 
 namespace audioTest {
 
-	using namespace flAudio;
+	using namespace myAudio;
 
 	bool audioTestInstance = false;
 
     uint16_t (*xyFunc)(uint8_t x, uint8_t y);
-	
-	uint8_t hue = 0;
 
-	float volumeLid = 10.0f;
+	uint8_t hue = 0;
+	uint8_t visualizationMode = 0;  // 0=spectrum, 1=VU meter, 2=beat pulse, 3=bass ripple
+	const uint8_t NUM_VIS_MODES = 4;
 
     void initAudioTest(uint16_t (*xy_func)(uint8_t, uint8_t)) {
         audioTestInstance = true;
         xyFunc = xy_func;
         
         // Initialize audio input system
-        flAudio::initAudioInput();
+        myAudio::initAudioInput();
 		// Initialize audio processing system
-		flAudio::initAudioProcessing();
+		myAudio::initAudioProcessing();
 	}
 
 	// Get current color palette
 	CRGBPalette16 getCurrentPalette() {
-		
+
 		switch(cColorPalette) {
 			case 0: return CRGBPalette16(RainbowColors_p);
 			case 1: return CRGBPalette16(HeatColors_p);
@@ -46,395 +44,258 @@ namespace audioTest {
 		}
 	}
 
-	// Clear display
-	void clearDisplay() {
-		if (cFadeSpeed == 0) {
-			fill_solid(leds, NUM_LEDS, CRGB::Black);
-		} else {
-			fadeToBlackBy(leds, NUM_LEDS, cFadeSpeed);
-		}
-	}
-
-    //===============================================================================================
-
-	void printSampleData(){
-
-		EVERY_N_MILLISECONDS(500) {
-
-			Serial.print("Volume: ");
-			Serial.println(flAudio::smoothedAudioData->volume);
-			Serial.print("VolumeRaw: ");
-			Serial.println(flAudio::smoothedAudioData->volumeRaw);
-			Serial.print("Peak: ");
-			Serial.println(flAudio::smoothedAudioData->peak);
-			Serial.print("Beat Detected: ");
-			Serial.println(flAudio::smoothedAudioData->beatDetected);
-			Serial.print("Dominant Frequency: ");
-			Serial.println(flAudio::smoothedAudioData->dominantFrequency);
-			Serial.print("Magnitude: ");
-			Serial.println(flAudio::smoothedAudioData->magnitude);
-			Serial.print("Volume: ");
-			Serial.println(flAudio::smoothedAudioData->volume);
-			for (size_t band = 0; band < numFreqBins ; band++) {
-				float bandValue = smoothedAudioData->frequencyBins[band];
-				Serial.print("Band");
-				Serial.print(band);
-				Serial.print(": ");
-				Serial.println(bandValue);
-			}
-		}
-	}
-	
-	// Visualization: Spectrum Bars
-	void drawSpectrumBars() { 
-	
-		clearDisplay();
+	//===============================================================================================
+	// VISUALIZATION MODE 0: Spectrum Analyzer
+	// Shows 16 FFT frequency bins as vertical bars across the matrix
+	//===============================================================================================
+	void drawSpectrum() {
 		CRGBPalette16 palette = getCurrentPalette();
-		
-		int barWidth = WIDTH / numFreqBins;
-		//int barWidth = 1;
+		const fl::FFTBins* fft = myAudio::getFFT();
 
-		if (!smoothedAudioData) return;
-		
-		for (size_t band = 0; band < numFreqBins ; band++) {
+		// Clear the display
+		fill_solid(leds, WIDTH * HEIGHT, CRGB::Black);
 
-			float magnitude = smoothedAudioData->frequencyBins[band];
+		if (!fft || fft->bins_raw.size() == 0) return;
 
-			uint16_t maxMagnitude = 1000 * cMagnitudeScale/255.0f;
-			int barHeight = map(magnitude,0,maxMagnitude,0,HEIGHT-1);
-			int xStart = band * barWidth;
-			
-			for (int x = 0; x < MAX(barWidth, 1); x++) {
-				for (int y = 0; y < barHeight; y++) {
+		// Calculate bar width - spread 16 bins across WIDTH
+		uint8_t barWidth = WIDTH / 16;
+		if (barWidth < 1) barWidth = 1;
 
-					uint8_t colorIndex = fl::map_range<float, uint8_t>(
-						float(y) / HEIGHT, 0, 1, 0, 255
-					);
-					CRGB color = ColorFromPalette(palette, colorIndex + hue);
+		for (uint8_t bin = 0; bin < 16 && bin < fft->bins_raw.size(); bin++) {
+			// Get bin value and scale it (bins can be 0-500+ based on our observations)
+			float rawValue = fft->bins_raw[bin];
+			// Scale: assume max around 300 for good visual range
+			uint8_t barHeight = constrain(map((int)rawValue, 0, 300, 0, HEIGHT), 0, HEIGHT);
 
-					int ledIndex = xyFunc(xStart + x, HEIGHT - 1 - y);
+			// Calculate x position for this bar
+			uint8_t xStart = bin * barWidth;
 
-					if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-						leds[ledIndex] = color;
+			// Draw the bar from bottom up
+			for (uint8_t y = 0; y < barHeight; y++) {
+				// Color based on height (low=green, mid=yellow, high=red style via palette)
+				uint8_t colorIndex = map(y, 0, HEIGHT - 1, 0, 255);
+				CRGB color = ColorFromPalette(palette, colorIndex);
+
+				// Draw bar width
+				for (uint8_t xOff = 0; xOff < barWidth; xOff++) {
+					uint8_t x = xStart + xOff;
+					if (x < WIDTH) {
+						// y=0 is top, so draw from bottom: HEIGHT-1-y
+						uint16_t idx = xyFunc(x, HEIGHT - 1 - y);
+						leds[idx] = color;
 					}
-					
-					/*
-					if (cMirrorMode) {
-						int mirrorIndex = xyFunc(WIDTH - 1 - (xStart + x), y);
-						if (mirrorIndex >= 0 && mirrorIndex < NUM_LEDS) {
-							leds[mirrorIndex] = color;
-						}
-					}
-					*/
 				}
 			}
 		}
 	}
 
-
-	// Visualization: Radial Spectrum
-	void drawRadialSpectrum() {
-
-		clearDisplay();
+	//===============================================================================================
+	// VISUALIZATION MODE 1: VU Meter
+	// Shows overall volume as horizontal bars filling from left to right
+	//===============================================================================================
+	void drawVUMeter() {
 		CRGBPalette16 palette = getCurrentPalette();
 
-		int centerX = WIDTH / 2;
-		int centerY = HEIGHT / 2;
+		// Clear the display
+		fill_solid(leds, WIDTH * HEIGHT, CRGB::Black);
 
-		if (!smoothedAudioData) return;  // Safety check
+		// Get RMS (with spike filtering and DC correction)
+		float rms = myAudio::getRMS();
 
-		for (size_t angle = 0; angle < 360; angle += 6) {  // Reduced resolution
-			size_t band = (angle / 6) % numFreqBins;
+		// Observed ranges from INMP441 with spike filtering:
+		//   Quiet room: 10-50
+		//   Speech/claps: 100-400
+		//   Loud music nearby: 400-800+
+		// We use a noise floor cutoff and scale the rest
 
-			// Get frequency bin magnitude
-			float magnitude = smoothedAudioData->frequencyBins[band];
+		constexpr float NOISE_FLOOR = 35.0f;    // Below this = silence; was 40
+		constexpr float MAX_SIGNAL = 550.0f;    // Full scale signal;  was 600
 
-			EVERY_N_MILLISECONDS(100){ Serial.println(magnitude); }
+		// Subtract noise floor and scale
+		float signal = rms - NOISE_FLOOR;
+		if (signal < 0) signal = 0;
 
-			//magnitude = MAX(0.0f, magnitude ); // - cNoiseFloor
-			//magnitude *= cGainAdjust;
-			//magnitude = fl::clamp(magnitude, 0.0f, 1.0f);
+		// Map to display width
+		uint8_t level = constrain((int)((signal / (MAX_SIGNAL - NOISE_FLOOR)) * WIDTH), 0, WIDTH);
 
-			//int radius = magnitude * (MIN(WIDTH, HEIGHT) / 2);
-			uint16_t maxMagnitude = 20 * cMagnitudeScale/255.0f;
-			int radius = map(magnitude,0,maxMagnitude,0,1);
+		// Smooth the level to reduce jitter from occasional spikes
+		static uint8_t smoothedLevel = 0;
+		// Fast attack, slower decay
+		if (level > smoothedLevel) {
+			smoothedLevel = level;  // Instant attack
+		} else {
+			// Decay: blend toward new level
+			smoothedLevel = (smoothedLevel * 3 + level) / 4;
+		}
 
-			for (int r = 0; r < radius; r++) {
-				int x = centerX + (r * cosf(angle * PI / 180.0f));
-				int y = centerY + (r * sinf(angle * PI / 180.0f));
+		// Draw horizontal bars across the full height
+		for (uint8_t x = 0; x < smoothedLevel; x++) {
+			// Color based on position (left=green, right=red via palette)
+			uint8_t colorIndex = map(x, 0, WIDTH - 1, 0, 255);
+			CRGB color = ColorFromPalette(palette, colorIndex);
+
+			for (uint8_t y = 0; y < HEIGHT; y++) {
+				uint16_t idx = xyFunc(x, y);
+				leds[idx] = color;
+			}
+		}
+	}
+
+	//===============================================================================================
+	// VISUALIZATION MODE 2: Beat Pulse
+	// Flashes/pulses the entire display on detected beats with decay
+	//===============================================================================================
+	uint8_t beatBrightness = 0;  // Decaying brightness for beat pulse
+
+	void drawBeatPulse() {
+		CRGBPalette16 palette = getCurrentPalette();
+
+		// On beat detection, set brightness to max
+		if (myAudio::beatDetected) {
+			beatBrightness = 255;
+			hue += 32;  // Shift color on each beat
+		}
+
+		// Fill with current color at current brightness
+		CRGB color = ColorFromPalette(palette, hue);
+		color.nscale8(beatBrightness);
+
+		fill_solid(leds, WIDTH * HEIGHT, color);
+
+		// Decay the brightness
+		if (beatBrightness > 10) {
+			beatBrightness = beatBrightness * 0.85;  // Exponential decay
+		} else {
+			beatBrightness = 0;
+		}
+	}
+
+	//===============================================================================================
+	// VISUALIZATION MODE 3: Bass Ripple
+	// Creates expanding rings from center based on bass energy
+	//===============================================================================================
+	uint8_t rippleRadius = 0;
+	uint8_t rippleHue = 0;
+
+	void drawBassRipple() {
+		CRGBPalette16 palette = getCurrentPalette();
+
+		// Fade existing content
+		fadeToBlackBy(leds, WIDTH * HEIGHT, 30);
+
+		// Get bass level and check for bass hit
+		float bass = myAudio::bassLevel;
+
+		// Trigger new ripple on strong bass (threshold ~100 based on observed data)
+		if (bass > 100 && rippleRadius == 0) {
+			rippleRadius = 1;
+			rippleHue = hue;
+			hue += 40;
+		}
+
+		// Draw expanding ripple ring
+		if (rippleRadius > 0) {
+			uint8_t centerX = WIDTH / 2;
+			uint8_t centerY = HEIGHT / 2;
+
+			// Draw a ring at current radius
+			for (uint16_t angle = 0; angle < 360; angle += 5) {
+				float rad = angle * 0.01745329;  // degrees to radians
+				int8_t x = centerX + (int8_t)(cos(rad) * rippleRadius);
+				int8_t y = centerY + (int8_t)(sin(rad) * rippleRadius);
 
 				if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
-					uint8_t colorIndex = fl::map_range<int, uint8_t>(r, 0, radius, 255, 0);
-					int ledIndex = xyFunc(x, y);
-					if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-						leds[ledIndex] = ColorFromPalette(palette, colorIndex + hue);
-					}
+					uint16_t idx = xyFunc(x, y);
+					leds[idx] = ColorFromPalette(palette, rippleHue);
 				}
 			}
-		}
-	}
-	
-	// Visualization: Waveform using AudioReactive processing
-	void drawWaveform(const Slice<const int16_t>& pcm) {
-		clearDisplay();
-		CRGBPalette16 palette = getCurrentPalette();
 
-		// Safety check for processed audio data
-		if (!smoothedAudioData) return;
+			rippleRadius += 2;  // Expand the ring
 
-		int samplesPerPixel = pcm.size() / WIDTH;
-		int centerY = HEIGHT / 2;
-
-		/*
-		// Use AudioReactive's volume for adaptive scaling
-		float globalVolume = smoothedAudioData->volume;
-		float adaptiveGain = 1.0f + (globalVolume * 2.0f); // Boost based on overall volume
-		*/
-		float magnitudeScale = cMagnitudeScale / 255.0f;
-		
-		for (size_t x = 0; x < WIDTH; x++) {
-			size_t sampleIndex = x * samplesPerPixel;
-			if (sampleIndex >= pcm.size()) break;
-
-			// Get the raw sample value and normalize
-			float sample = float(pcm[sampleIndex]) / 32768.0f;  // Normalize to -1.0 to 1.0
-			float absSample = fabsf(sample);
-
-			// Keep some logarithmic compression for better visual response to quiet sounds
-			float logAmplitude = 0.0f;
-			if (absSample > 0.001f) {
-				// Logarithmic compression with AudioReactive-informed scaling
-				float scaledSample = absSample * magnitudeScale * 3.0f; // Boost factor
-				logAmplitude = log10f(1.0f + absSample * 9.0f) / log10f(10.0f); // Normalize to 0-1   replaced scaledSample with absSample
-			}
-
-			// Apply some gamma correction for better visual response
-			logAmplitude = powf(logAmplitude, 0.6f);
-
-			// Calculate amplitude in pixels
-			int amplitudePixels = int(logAmplitude * (HEIGHT / 2));
-			amplitudePixels = fl::clamp(amplitudePixels, 0, HEIGHT / 2);
-
-			// Preserve the sign for proper waveform display
-			if (sample < 0) amplitudePixels = -amplitudePixels;
-
-			// Color mapping based on amplitude intensity
-			uint8_t colorIndex = fl::map_range<int, uint8_t>(abs(amplitudePixels), 0, HEIGHT/2, 40, 255);
-			CRGB color = ColorFromPalette(palette, colorIndex + hue);
-
-			// Apply brightness scaling for low amplitudes
-			if (abs(amplitudePixels) < HEIGHT / 4) {
-				color.fadeToBlackBy(128 - (abs(amplitudePixels) * 512 / HEIGHT));
-			}
-
-			// Draw vertical line from center
-			if (amplitudePixels == 0) {
-				// Draw center point for zero amplitude
-				int ledIndex = xyFunc(x, centerY);
-				if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-					leds[ledIndex] = color.fadeToBlackBy(200);
-				}
-			} else {
-				// Draw line from center to amplitude
-				int startY = (amplitudePixels > 0) ? centerY : centerY + amplitudePixels;
-				int endY = (amplitudePixels > 0) ? centerY + amplitudePixels : centerY;
-
-				for (int y = startY; y <= endY; y++) {
-					if (y >= 0 && y < HEIGHT) {
-						int ledIndex = xyFunc(x, y);
-						if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-							// Fade edges for smoother appearance
-							CRGB pixelColor = color;
-							if (y == startY || y == endY) {
-								pixelColor.fadeToBlackBy(100);
-							}
-							leds[ledIndex] = pixelColor;
-						}
-					}
-				}
+			// Reset when ripple goes off screen
+			uint8_t maxRadius = (WIDTH > HEIGHT ? WIDTH : HEIGHT) / 2 + 5;
+			if (rippleRadius > maxRadius) {
+				rippleRadius = 0;
 			}
 		}
 	}
 
-//=========================================
-
-	// Visualization: VU Meter using AudioReactive data
-	void drawVUMeter(float volume, float peak) {
-		
-		clearDisplay();
-		CRGBPalette16 palette = getCurrentPalette();
-
-		if (!smoothedAudioData) return;
-
-		volumeLid = 20.0f;	
-
-		bool beatDetected = smoothedAudioData->beatDetected;
-
-	    // Volume level bar
-		uint8_t volumeWidth = ( volume / volumeLid ) * WIDTH;
-    	volumeWidth = MIN(volumeWidth, WIDTH);
-		for (int x = 0; x < volumeWidth; x++) {
-			for (int y = HEIGHT/3; y < 2*HEIGHT/3; y++) {
-				uint8_t colorIndex = fl::map_range<int, uint8_t>(x, 0, WIDTH, 0, 255);
-				int ledIndex = xyFunc(x, y);
-				if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-					leds[ledIndex] = ColorFromPalette(palette, colorIndex + hue);
-				}
-			}
-		}
-
-		// Peak indicator
-		/*int peakX = peak * WIDTH;
-    	peakX = MIN(peakX, WIDTH - 1);
-
-		for (int y = HEIGHT/4; y < 3*HEIGHT/4; y++) {
-			int ledIndex = xyFunc(peakX, y);
-			if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-				leds[ledIndex] = CRGB::Red;
-			}
-		}*/
-
-		// Beat indicator (flash top/bottom edges)
-		/*if (beatDetected) {
-
-			for (int x = 0; x < WIDTH; x++) {
-				// Top and bottom edges
-				int ledIndex1 = xyFunc(x, 0);
-				int ledIndex2 = xyFunc(x, HEIGHT - 1);
-				if (ledIndex1 >= 0 && ledIndex1 < NUM_LEDS) leds[ledIndex1] = CRGB::White;
-				if (ledIndex2 >= 0 && ledIndex2 < NUM_LEDS) leds[ledIndex2] = CRGB::White;
-			}
-
-			for (int y = 0; y < HEIGHT; y++) {
-				// Left and right edges
-				int ledIndex1 = xyFunc(0, y);
-				int ledIndex2 = xyFunc(WIDTH - 1, y);
-				if (ledIndex1 >= 0 && ledIndex1 < NUM_LEDS) leds[ledIndex1] = CRGB::White;
-				if (ledIndex2 >= 0 && ledIndex2 < NUM_LEDS) leds[ledIndex2] = CRGB::White;
-			}
-		}*/
+	//===============================================================================================
+	// Cycle through visualization modes (can be triggered by MODE button via BLE)
+	//===============================================================================================
+	void nextVisualizationMode() {
+		visualizationMode = (visualizationMode + 1) % NUM_VIS_MODES;
+		Serial.print("Visualization mode: ");
+		Serial.println(visualizationMode);
 	}
 
-	/*
-	// Visualization: Matrix Rain
-	void drawMatrixRain(float peak) {
-		// Shift everything down
-		for (int x = 0; x < WIDTH; x++) {
-			for (int y = HEIGHT - 1; y > 0; y--) {
-				int currentIndex = xyFunc(x, y);
-				int aboveIndex = xyFunc(x, y - 1);
-				if (currentIndex >= 0 && currentIndex < NUM_LEDS && 
-					aboveIndex >= 0 && aboveIndex < NUM_LEDS) {
-					leds[currentIndex] = leds[aboveIndex];
-					leds[currentIndex].fadeToBlackBy(40);
-				}
-			}
-		}
-		
-		// Add new drops based on audio
-		int numDrops = peak * WIDTH * cAudioGain * autoGainValue;
-		for (int i = 0; i < numDrops; i++) {
-			int x = random(WIDTH);
-			int ledIndex = xyFunc(x, 0);
-			if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-				leds[ledIndex] = CHSV(96, 255, 255);  // Green
-			}
+	//===============================================================================================
+
+	// Set to true to run audio diagnostics instead of visualizations
+	// Use this to calibrate and verify audio input is working correctly
+	constexpr bool DIAGNOSTIC_MODE = false;
+
+	void testFunction() {
+		// Minimal diagnostic - just show mode and occasional RMS
+		EVERY_N_MILLISECONDS(2000){
+			Serial.print("Mode: ");
+			Serial.print(visualizationMode);
+			Serial.print(" | RMS: ");
+			Serial.print(myAudio::getRMS());
+			Serial.print(" | Bass: ");
+			Serial.println(myAudio::bassLevel);
 		}
 	}
 
-	// Visualization: Fire Effect (simplified for WebAssembly)
-	void drawFireEffect(float peak) {
-		// Simple fire effect without buffer
-		clearDisplay();
-		
-		// Add heat at bottom based on audio
-		int heat = 100 + (peak * 155 * cAudioGain * autoGainValue);
-		heat = MIN(heat, 255);
-		
-		for (int x = 0; x < WIDTH; x++) {
-			for (int y = 0; y < HEIGHT; y++) {
-				// Simple gradient from bottom to top
-				int heatLevel = heat * (HEIGHT - y) / HEIGHT;
-				heatLevel = heatLevel * random(80, 120) / 100;  // Add randomness
-				heatLevel = MIN(heatLevel, 255);
-				
-				int ledIndex = xyFunc(x, y);
-				if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-					leds[ledIndex] = HeatColor(heatLevel);
-				}
-			}
-		}
-	}
-
-	// Visualization: Plasma Wave
-	void drawPlasmaWave(float peak) {
-		static float time = 0;
-		time += 0.05f + (peak * 0.2f);
-		
-		CRGBPalette16 palette = getCurrentPalette();
-		
-		for (int x = 0; x < WIDTH; x++) {
-			for (int y = 0; y < HEIGHT; y++) {
-				float value = sinf(x * 0.1f + time) + 
-							sinf(y * 0.1f - time) +
-							sinf((x + y) * 0.1f + time) +
-							sinf(sqrtf(x * x + y * y) * 0.1f - time);
-				
-				value = (value + 4) / 8;  // Normalize to 0-1
-				value *= cAudioGain * autoGainValue;
-				
-				uint8_t colorIndex = value * 255;
-				int ledIndex = xyFunc(x, y);
-				if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-					leds[ledIndex] = ColorFromPalette(palette, colorIndex + hue);
-				}
-			}
-		}
-	}
-	*/
-
-	//==================================================================================
+	//===============================================================================================
 
 	void runAudioTest() {
 
-		hue += 1;
-		
-		flAudio::updateConfig();
-		flAudio::sampleAudio();
+		myAudio::sampleAudio();
 
-		//printSampleData();
-			
-		switch (MODE) {
-
-			case 0:  // Spectrum Bars
-				drawSpectrumBars();
-				break;
-				
-			case 1:  // Radial Spectrum
-				drawRadialSpectrum();
-				break;
-		
-			case 2:  // Waveform
-				drawWaveform(currentSample.pcm());
-				break;
-			
-			case 3:  // VU Meter
-				drawVUMeter(smoothedAudioData->volume, smoothedAudioData->peak);
-				break;
-			/*	
-			case 4:  // Matrix Rain
-				drawMatrixRain(peakLevel);
-				break;
-				
-			case 5:  // Fire Effect
-				drawFireEffect(peakLevel);
-				break;
-				
-			case 6:  // Plasma Wave
-				drawPlasmaWave(peakLevel);
-				break;
-			*/
+		// Run diagnostic mode for calibration testing
+		if (DIAGNOSTIC_MODE) {
+			myAudio::runAudioDiagnostic();
+			// Still run VU meter visualization so you can see audio response on LEDs
+			drawVUMeter();
+			return;
 		}
+
+		testFunction();
+
+		// Use cMode from BLE to select visualization (or cycle with visualizationMode)
+		// For now, use the local visualizationMode variable
+		// You can map cMode to visualizationMode if desired: visualizationMode = cMode % NUM_VIS_MODES;
+
+		switch(visualizationMode=2) {
+			case 0:
+				drawSpectrum();
+				break;
+			case 1:
+				drawVUMeter();
+				break;
+			case 2:
+				drawBeatPulse();
+				break;
+			case 3:
+				drawBassRipple();
+				break;
+			default:
+				drawSpectrum();
+				break;
+		}
+
+		// Allow mode cycling via BLE MODE control
+		// Map MODE (0-255) to visualization mode
+		/*
+		static uint8_t lastMode = 255;  // Initialize to invalid so first check triggers
+		if (MODE != lastMode) {
+			visualizationMode = MODE % NUM_VIS_MODES;
+			lastMode = MODE;
+			Serial.print("Switched to visualization mode: ");
+			Serial.println(visualizationMode);
+		}*/
+
 	} // runAudioTest()
 		
 }  // namespace audioTest

@@ -15,35 +15,37 @@
 #include "LittleFS.h"
 #define FORMAT_LITTLEFS_IF_FAILED true 
 
-#define BIG_BOARD
-//#undef BIG_BOARD
+//#define BIG_BOARD
+#undef BIG_BOARD
 
-#define DATA_PIN_1 2
+#define DATA_PIN_1 GPIO_NUM_2
 
 //*********************************************
 
+/*
 #ifdef BIG_BOARD 
-	#include "matrixMap_32x48_3pin.h" 
+	#include "reference/matrixMap_32x48_3pin.h" 
 	#define DATA_PIN_2 3
     #define DATA_PIN_3 4
     #define HEIGHT 32 
     #define WIDTH 48
     #define NUM_SEGMENTS 3
     #define NUM_LEDS_PER_SEGMENT 512
-#else 
+#else */
+	/*
 	#include "matrixMap_24x24.h"
 	#define HEIGHT 24 
     #define WIDTH 24
     #define NUM_SEGMENTS 1
     #define NUM_LEDS_PER_SEGMENT 576
-	/*
-	#include "matrixMap_22x22.h"
+	*/
+	#include "reference/matrixMap_22x22.h"
 	#define HEIGHT 22 
     #define WIDTH 22
     #define NUM_SEGMENTS 1
     #define NUM_LEDS_PER_SEGMENT 484
-	*/
-#endif
+	
+//#endif
 
 
 //*********************************************
@@ -53,7 +55,7 @@
 CRGB leds[NUM_LEDS];
 uint16_t ledNum = 0;
 
-using namespace fl;
+//using namespace fl;
 
 //bleControl variables ***********************************************************************
 //elements that must be set before #include "bleControl.h" 
@@ -124,19 +126,25 @@ enum Mapping {
 	XYMap myXYmap = XYMap::constructWithLookUpTable(WIDTH, HEIGHT, progBottomUp);
 	XYMap xyRect = XYMap::constructRectangularGrid(WIDTH, HEIGHT);
 
+
 //******************************************************************************************************************************
+
+//using namespace fl;
 
 void setup() {
 		
-		BRIGHTNESS = 50;
+		BRIGHTNESS = 35;
 		SPEED = 5;
 		PROGRAM = 3;
 		MODE = 2;
+
+		FastLED.setExclusiveDriver("RMT");
 		
 		FastLED.addLeds<WS2812B, DATA_PIN_1, GRB>(leds, 0, NUM_LEDS_PER_SEGMENT)
 				.setCorrection(TypicalLEDStrip);
 				//.setDither(BRIGHTNESS < 255);
 
+		/*
 		#ifdef DATA_PIN_2
 				FastLED.addLeds<WS2812B, DATA_PIN_2, GRB>(leds, NUM_LEDS_PER_SEGMENT, NUM_LEDS_PER_SEGMENT)
 				.setCorrection(TypicalLEDStrip);
@@ -145,7 +153,8 @@ void setup() {
 		#ifdef DATA_PIN_3
 		FastLED.addLeds<WS2812B, DATA_PIN_3, GRB>(leds, NUM_LEDS_PER_SEGMENT * 2, NUM_LEDS_PER_SEGMENT)
 				.setCorrection(TypicalLEDStrip);
-		#endif
+		#endif*/
+		
 		FastLED.setBrightness(BRIGHTNESS);
 
 		FastLED.clear();
@@ -172,12 +181,18 @@ void setup() {
 		
 }
 
-
 //*****************************************************************************************
 
 void loop() {
-
-		if (!displayOn){
+		
+	/*
+	static uint8_t hue = 0;
+  	fill_rainbow(leds, NUM_LEDS, hue, 7);
+  	FastLED.show();
+  	hue ++;
+	*/
+	
+	if (!displayOn){
 			FastLED.clear();
 		}
 		
@@ -204,4 +219,5 @@ void loop() {
 			wasConnected = false;
 		}
 
+		
 } // loop()

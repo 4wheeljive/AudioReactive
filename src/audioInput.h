@@ -6,32 +6,35 @@
 #include "fl/audio_input.h"
 #include "platforms/esp/32/audio/sound_util.h"
 
-#include "fl/type_traits.h"
-#include "fl/memory.h"
-#include "fl/circular_buffer.h"
+//#include "fl/type_traits.h"
+//#include "fl/memory.h"
+//#include "fl/circular_buffer.h"
 
-namespace flAudio {
-
-    using fl::i16;
+namespace myAudio {
 
 	const uint8_t numFreqBins = 16; 
 
     // I2S Configuration
-    #define I2S_WS_PIN 5  // Word Select (WS) (YELLOW)
-    #define I2S_SD_PIN 8  // Serial Data (SD) (GREEN)
-    #define I2S_CLK_PIN 9 // Serial Clock (SCK) (BLUE)
-    #define I2S_CHANNEL fl::Right
+    #define I2S_CLK_PIN 7 // Serial Clock (SCK) (BLUE)
+    #define I2S_WS_PIN 8 // Word Select (WS) (GREEN)
+    #define I2S_SD_PIN 9  // Serial Data (SD) (YELLOW)
+
+    // INMP441 L/R pin determines output channel:
+    //   L/R pin LOW  (or GND) → outputs on Left channel
+    //   L/R pin HIGH (or VCC) → outputs on Right channel
+    // If you see constant saturation (32767), try switching this!
+    #define I2S_CHANNEL fl::Left  // Try fl::Right if seeing saturation
 
     // declare fl::audio_input.h objects
     fl::AudioConfig config = fl::AudioConfig::CreateInmp441(I2S_WS_PIN, I2S_SD_PIN, I2S_CLK_PIN, I2S_CHANNEL);
     fl::shared_ptr<fl::IAudioInput> audioSource;
 
     //=========================================================================
-    
+        
     void initAudioInput() {
 
         fl::string errorMsg;
-        flAudio::audioSource = fl::IAudioInput::create(config, &errorMsg);
+        myAudio::audioSource = fl::IAudioInput::create(config, &errorMsg);
 
         Serial.println("Waiting 3000ms for audio device to stdout initialization...");
         delay(3000);
@@ -92,5 +95,4 @@ namespace flAudio {
             }
         }*/
     }
-
-} // namespace flAudio        
+} // namespace myAudio
