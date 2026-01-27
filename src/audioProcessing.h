@@ -9,14 +9,33 @@
 
 namespace myAudio {
 
-    using namespace fl; 
+    using namespace fl;
+
+    //=========================================================================
+    // Audio filtering configuration
+    // Applied at the source before AudioProcessor for clean beat detection,
+    // FFT, and all downstream processing.
+    //=========================================================================
+
+    // Spike filtering: I2S occasionally produces spurious samples near int16_t max/min
+    constexpr int16_t SPIKE_THRESHOLD = 10000;  // Samples beyond this are glitches
+
+    // Noise gate: Signals below this RMS are considered silence
+    // Prevents beat detection from triggering on background noise (fans, etc.)
+    // Use higher threshold with hysteresis to prevent flickering at boundary
+    constexpr float NOISE_GATE_OPEN = 80.0f;   // Signal must exceed this to open gate
+    constexpr float NOISE_GATE_CLOSE = 50.0f;  // Signal must fall below this to close gate
 
     //=========================================================================
     // Core audio objects
     //=========================================================================
 
-    AudioSample currentSample;
+    AudioSample currentSample;      // Raw sample from I2S (kept for diagnostics)
+    AudioSample filteredSample;     // Spike-filtered sample for processing
     AudioProcessor audioProcessor;
+
+    // Buffer for filtered PCM data
+    int16_t filteredPcmBuffer[512];  // Matches I2S_AUDIO_BUFFER_LEN
 
     //=========================================================================
     // State populated by callbacks (reactive approach)
@@ -144,21 +163,73 @@ namespace myAudio {
 
         validCount++;
 
-        // DIAGNOSTIC: Print raw sample data before AudioProcessor
-        /*
-        EVERY_N_MILLISECONDS(250) {
-            Serial.print("[DIAG] Sample VALID. Raw RMS from sample: ");
-            Serial.print(currentSample.rms());
-            Serial.print(" | PCM size: ");
-            Serial.print(currentSample.pcm().size());
-            Serial.print(" | Valid/Invalid: ");
-            Serial.print(validCount);
-            Serial.print("/");
-            Serial.println(invalidCount);
-        }*/
+        //=====================================================================
+        // SPIKE FILTERING - Filter raw samples BEFORE AudioProcessor
+        // This ensures beat detection, FFT, bass/mid/treble all get clean data
+        //=====================================================================
+
+        auto rawPcm = currentSample.pcm();
+        size_t n = rawPcm.size();
+
+        // Calculate DC offset from non-spike samples
+        int64_t dcSum = 0;
+        size_t dcCount = 0;
+        for (size_t i = 0; i < n; i++) {
+            if (rawPcm[i] > -SPIKE_THRESHOLD && rawPcm[i] < SPIKE_THRESHOLD) {
+                dcSum += rawPcm[i];
+                dcCount++;
+            }
+        }
+        int16_t dcOffset = (dcCount > 0) ? static_cast<int16_t>(dcSum / dcCount) : 0;
+
+        // Copy samples to filtered buffer, replacing spikes with zero
+        // Also calculate RMS for noise gate decision
+        uint64_t sumSq = 0;
+        size_t validSamples = 0;
+
+        for (size_t i = 0; i < n && i < 512; i++) {
+            if (rawPcm[i] > -SPIKE_THRESHOLD && rawPcm[i] < SPIKE_THRESHOLD) {
+                // Valid sample - keep it (with DC correction applied)
+                int16_t corrected = rawPcm[i] - dcOffset;
+                filteredPcmBuffer[i] = corrected;
+                sumSq += static_cast<int32_t>(corrected) * corrected;
+                validSamples++;
+            } else {
+                // Spike detected - replace with zero
+                filteredPcmBuffer[i] = 0;
+            }
+        }
+
+        // Calculate RMS of the filtered signal
+        float blockRMS = (validSamples > 0) ? fl::sqrtf(static_cast<float>(sumSq) / validSamples) : 0.0f;
+
+        // NOISE GATE with hysteresis to prevent flickering
+        // Gate opens when signal exceeds NOISE_GATE_OPEN
+        // Gate closes when signal falls below NOISE_GATE_CLOSE
+        static bool gateOpen = false;
+
+        if (blockRMS >= NOISE_GATE_OPEN) {
+            gateOpen = true;
+        } else if (blockRMS < NOISE_GATE_CLOSE) {
+            gateOpen = false;
+        }
+        // Between CLOSE and OPEN thresholds, gate maintains its previous state
+
+        // If gate is closed, zero out entire buffer
+        if (!gateOpen) {
+            for (size_t i = 0; i < n && i < 512; i++) {
+                filteredPcmBuffer[i] = 0;
+            }
+        }
+
+        // Create filtered AudioSample from the cleaned buffer
+        fl::span<const int16_t> filteredSpan(filteredPcmBuffer, n);
+        filteredSample = AudioSample(filteredSpan, currentSample.timestamp());
 
         // Process through AudioProcessor (triggers callbacks)
-        audioProcessor.update(currentSample);
+        // TEST: Try raw sample to see if FFT crash is related to filtering
+        //audioProcessor.update(currentSample);      // raw - for testing
+         audioProcessor.update(filteredSample);  // filtered
     }
 
     //=========================================================================
@@ -174,76 +245,29 @@ namespace myAudio {
     // Get FFT bins directly (convenience wrapper)
     // Returns nullptr if no valid context
     const fl::FFTBins* getFFT() {
+        Serial.println("getFFT: getting context");
         auto ctx = audioProcessor.getContext();
+        Serial.print("getFFT: context is ");
+        Serial.println(ctx ? "valid" : "null");
         if (ctx) {
-            return &ctx->getFFT(NUM_FFT_BINS, FFT_MIN_FREQ, FFT_MAX_FREQ);
+            Serial.println("getFFT: calling ctx->getFFT()");
+            const fl::FFTBins* result = &ctx->getFFT(NUM_FFT_BINS, FFT_MIN_FREQ, FFT_MAX_FREQ);
+            Serial.println("getFFT: done");
+            return result;
         }
         return nullptr;
     }
 
-    // Get RMS with DC offset correction and spike filtering
-    // The INMP441 microphone outputs samples with a DC bias that inflates
-    // the raw RMS calculation. This function removes the DC offset first.
-    // Additionally, the I2S interface occasionally produces spurious spike
-    // samples near int16_t max/min - these are filtered out.
+    // Get RMS from the filtered sample
+    // Spike filtering and DC correction are now done at the source in sampleAudio()
+    // This function just adds temporal smoothing for stability
     float getRMS() {
-        if (!currentSample.isValid()) return 0.0f;
+        if (!filteredSample.isValid()) return 0.0f;
 
-        auto pcm = currentSample.pcm();
-        size_t n = pcm.size();
-        if (n == 0) return 0.0f;
+        // Get RMS directly from the pre-filtered sample
+        float rms = filteredSample.rms();
 
-        // Spike threshold - samples beyond this are considered glitches
-        // Based on observed data: real audio peaks at ~1000-2000, glitches hit 32000+
-        // Using 10000 as a safe threshold that won't filter real audio
-        constexpr int16_t SPIKE_THRESHOLD = 10000;
-
-        // First pass: calculate DC offset excluding spike samples
-        int64_t sum = 0;
-        size_t validCount = 0;
-        for (size_t i = 0; i < n; i++) {
-            if (pcm[i] > -SPIKE_THRESHOLD && pcm[i] < SPIKE_THRESHOLD) {
-                sum += pcm[i];
-                validCount++;
-            }
-        }
-
-        // If most samples are spikes, fall back to using all samples
-        if (validCount < n / 2) {
-            sum = 0;
-            for (size_t i = 0; i < n; i++) {
-                sum += pcm[i];
-            }
-            validCount = n;
-        }
-
-        int16_t dcOffset = (validCount > 0) ? static_cast<int16_t>(sum / validCount) : 0;
-
-        // Second pass: calculate RMS excluding spike samples
-        uint64_t sumSq = 0;
-        size_t rmsCount = 0;
-        for (size_t i = 0; i < n; i++) {
-            if (pcm[i] > -SPIKE_THRESHOLD && pcm[i] < SPIKE_THRESHOLD) {
-                int32_t corrected = static_cast<int32_t>(pcm[i]) - dcOffset;
-                sumSq += corrected * corrected;
-                rmsCount++;
-            }
-        }
-
-        // Fall back if too few valid samples
-        if (rmsCount < n / 2) {
-            sumSq = 0;
-            for (size_t i = 0; i < n; i++) {
-                int32_t corrected = static_cast<int32_t>(pcm[i]) - dcOffset;
-                sumSq += corrected * corrected;
-            }
-            rmsCount = n;
-        }
-
-        float rms = (rmsCount > 0) ? fl::sqrtf(static_cast<float>(sumSq) / rmsCount) : 0.0f;
-
-        // Temporal smoothing to filter out occasional bad blocks
-        // Use a rolling history to detect and reject outliers
+        // Temporal smoothing using median filter to reject occasional outliers
         static float history[4] = {0, 0, 0, 0};
         static uint8_t histIdx = 0;
 
@@ -254,7 +278,6 @@ namespace myAudio {
         // Find median of last 4 values (simple sort for 4 elements)
         float sorted[4];
         for (int i = 0; i < 4; i++) sorted[i] = history[i];
-        // Simple bubble sort for 4 elements
         for (int i = 0; i < 3; i++) {
             for (int j = i + 1; j < 4; j++) {
                 if (sorted[i] > sorted[j]) {
@@ -280,8 +303,13 @@ namespace myAudio {
         return smoothedRMS;
     }
     
-    // Get raw PCM data for waveform visualization
+    // Get filtered PCM data for waveform visualization
     fl::Slice<const int16_t> getPCM() {
+        return filteredSample.pcm();
+    }
+
+    // Get raw (unfiltered) PCM data - for diagnostics only
+    fl::Slice<const int16_t> getRawPCM() {
         return currentSample.pcm();
     }
 

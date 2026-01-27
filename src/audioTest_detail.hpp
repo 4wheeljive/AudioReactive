@@ -50,12 +50,25 @@ namespace audioTest {
 	//===============================================================================================
 	void drawSpectrum() {
 		CRGBPalette16 palette = getCurrentPalette();
-		const fl::FFTBins* fft = myAudio::getFFT();
 
 		// Clear the display
 		fill_solid(leds, WIDTH * HEIGHT, CRGB::Black);
 
-		if (!fft || fft->bins_raw.size() == 0) return;
+		// DEBUG: Check where crash occurs
+		Serial.println("drawSpectrum: before getFFT");
+
+		const fl::FFTBins* fft = myAudio::getFFT();
+
+		Serial.println("drawSpectrum: after getFFT");
+
+		if (!fft || fft->bins_raw.size() == 0) {
+			Serial.println("drawSpectrum: no FFT data");
+			return;
+		}
+
+		Serial.print("drawSpectrum: got ");
+		Serial.print(fft->bins_raw.size());
+		Serial.println(" bins");
 
 		// Calculate bar width - spread 16 bins across WIDTH
 		uint8_t barWidth = WIDTH / 16;
@@ -267,7 +280,7 @@ namespace audioTest {
 		// For now, use the local visualizationMode variable
 		// You can map cMode to visualizationMode if desired: visualizationMode = cMode % NUM_VIS_MODES;
 
-		switch(visualizationMode=2) {
+		switch(visualizationMode=1) {
 			case 0:
 				drawSpectrum();
 				break;
